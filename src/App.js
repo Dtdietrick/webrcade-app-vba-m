@@ -27,9 +27,26 @@ class App extends WebrcadeApp {
 
   componentDidMount() {
     super.componentDidMount();
+    let { appProps, ModeEnum } = this;
 
-    const { appProps, ModeEnum } = this;
+    //feed based launch fix
+    if (!appProps || !appProps.title || !appProps.rom || !appProps.type) {
+      console.warn("appProps invalid — attempting to extract from feed.");
 
+      try {
+        const selectedItem = this.props?.feed?.getSelectedItem?.();
+        if (selectedItem?.props) {
+          appProps = {
+            ...selectedItem.props,
+            title: selectedItem.title,
+            type: selectedItem.type,
+          };
+          console.log("Extracted appProps from feed:", appProps);
+        }
+      } catch (err) {
+        console.error("Failed to patch appProps from feed:", err);
+      }
+    }
     // Set anchor for messages
     setMessageAnchorId('screen');
 
@@ -128,43 +145,26 @@ class App extends WebrcadeApp {
 
       const { emulator } = this;
 
+      // Expose emulator on global for external tools
+      window.app = window.app || {};
+      window.app.emulator = emulator;
+      window.app.emulator.saveState = emulator.saveState?.bind(emulator);
+      window.getSaveStateBlob = window.wrc.getSaveBlob;
+
       // Determine extensions
       const exts = [
-        ...AppRegistry.instance.getExtensions(
-          APP_TYPE_KEYS.VBA_M_GBA,
-          true,
-          false,
-        ),
-        ...AppRegistry.instance.getExtensions(
-          APP_TYPE_KEYS.VBA_M_GB,
-          true,
-          false,
-        ),
-        ...AppRegistry.instance.getExtensions(
-          APP_TYPE_KEYS.VBA_M_GBC,
-          true,
-          false,
-        ),
+        ...AppRegistry.instance.getExtensions(APP_TYPE_KEYS.VBA_M_GBA, true, false),
+        ...AppRegistry.instance.getExtensions(APP_TYPE_KEYS.VBA_M_GB, true, false),
+        ...AppRegistry.instance.getExtensions(APP_TYPE_KEYS.VBA_M_GBC, true, false),
       ];
       const extsNotUnique = [
         ...new Set([
-          ...AppRegistry.instance.getExtensions(
-            APP_TYPE_KEYS.VBA_M_GBA,
-            true,
-            true,
-          ),
-          ...AppRegistry.instance.getExtensions(
-            APP_TYPE_KEYS.VBA_M_GB,
-            true,
-            true,
-          ),
-          ...AppRegistry.instance.getExtensions(
-            APP_TYPE_KEYS.VBA_M_GBC,
-            true,
-            true,
-          ),
+          ...AppRegistry.instance.getExtensions(APP_TYPE_KEYS.VBA_M_GBA, true, true),
+          ...AppRegistry.instance.getExtensions(APP_TYPE_KEYS.VBA_M_GB, true, true),
+          ...AppRegistry.instance.getExtensions(APP_TYPE_KEYS.VBA_M_GBC, true, true),
         ]),
       ];
+
       // Load emscripten and the ROM
       const uz = new Unzip().setDebug(this.isDebug());
       let romBlob = null;
@@ -187,6 +187,8 @@ class App extends WebrcadeApp {
         .then((blob) => blobToStr(blob))
         .then((str) => {
           romMd5 = md5(str);
+          emulator.romMd5 = romMd5;
+          console.log("🔬 Calculated new MD5:", romMd5);
         })
         .then(() => new Response(romBlob).arrayBuffer())
         .then((bytes) =>
@@ -200,17 +202,55 @@ class App extends WebrcadeApp {
             gbColors,
             gbPalette,
             gbBorder,
-          ),
+          )
         )
         .then(() => this.setState({ mode: ModeEnum.LOADED }))
+        .then(() => {
+          // Setup external save manager hooks
+          const saveManager = emulator.saveManager;
+          const module = emulator?.module || saveManager?.module || window.Module;
+          const title = emulator.getTitle?.();
+          const FS = module?.FS;
+
+          window._mod = module;
+          window.FS = FS;
+
+          window.wrc = {
+            getSaveManager: () => saveManager,
+            getSaveBlob: async () => {
+              try {
+                const id = saveManager.getId?.(title, type, romMd5);
+                const files = await saveManager.loadLocal(title);
+                return files ? await saveManager.createZip(files) : null;
+              } catch (err) {
+                return null;
+              }
+            },
+            flushSaveData: () => {
+              try {
+                if (saveManager?.flush) {
+                  saveManager.flush();
+                  if (window.FS?.syncfs) {
+                    window.FS.syncfs(false, (err) => {
+                      if (err) console.error("FS.syncfs failed:", err);
+                    });
+                  }
+                }
+              } catch (err) {
+                console.error("flushSaveData error:", err);
+              }
+            }
+          };
+        })
         .catch((msg) => {
           LOG.error(msg);
           this.exit(
             this.isDebug()
               ? msg
-              : Resources.getText(TEXT_IDS.ERROR_RETRIEVING_GAME),
+              : Resources.getText(TEXT_IDS.ERROR_RETRIEVING_GAME)
           );
         });
+
     } catch (e) {
       this.exit(e);
     }
