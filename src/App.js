@@ -5,6 +5,7 @@ import {
   setMessageAnchorId,
   settings,
   AppRegistry,
+  LaunchParamParser,
   FetchAppData,
   Resources,
   Unzip,
@@ -25,38 +26,32 @@ class App extends WebrcadeApp {
   rotSideways = false;
   isGba = false;
 
+
+  
   componentDidMount() {
     super.componentDidMount();
     let { appProps, ModeEnum } = this;
 
-    //feed based launch fix
-    if (!appProps || !appProps.title || !appProps.rom || !appProps.type) {
-      console.warn("appProps invalid — attempting to extract from feed.");
-
-      try {
-        const selectedItem = this.props?.feed?.getSelectedItem?.();
-        if (selectedItem?.props) {
-          appProps = {
-            ...selectedItem.props,
-            title: selectedItem.title,
-            type: selectedItem.type,
-          };
-          console.log("Extracted appProps from feed:", appProps);
-        }
-      } catch (err) {
-        console.error("Failed to patch appProps from feed:", err);
-      }
+    this.appProps = LaunchParamParser.extractAppProps();
+    if (!this.appProps) throw new Error("❌ No launch props provided.");
+    
+    const props = this.appProps;
+    console.log("💡 Props at init:", this.appProps);
+    if (!props || !props.rom || !props.type) {
+      console.error("Failed to initialize: Missing required appProps.");
+      return;
     }
+
     // Set anchor for messages
     setMessageAnchorId('screen');
 
     try {
       // Get the ROM location that was specified
-      const rom = appProps.rom;
+      const rom = props.rom;
       if (!rom) throw new Error('A ROM file was not specified.');
 
       // Get the ROM rotation (if applicable)
-      const rot = appProps.rotation;
+      const rot = props.rotation;
       if (rot) {
         const rotInt = parseInt(rot);
         if (!isNaN(rotInt)) {
@@ -75,7 +70,7 @@ class App extends WebrcadeApp {
 
       // Get flash size
       let flashSize = -1;
-      const flash = appProps.flashSize;
+      const flash = props.flashSize;
       if (flash) {
         const flashInt = parseInt(flash);
         if (!isNaN(flashInt)) {
@@ -87,7 +82,7 @@ class App extends WebrcadeApp {
 
       // Get save type
       let saveType = -1;
-      const save = appProps.saveType;
+      const save = props.saveType;
       if (save) {
         const saveInt = parseInt(save);
         if (!isNaN(saveInt)) {
@@ -98,34 +93,34 @@ class App extends WebrcadeApp {
       }
 
       // Get RTC
-      const rtc = appProps.rtc !== undefined ? appProps.rtc === true : false;
+      const rtc = props.rtc !== undefined ? props.rtc === true : false;
 
       // Get Mirroring
       const mirroring =
-        appProps.mirroring !== undefined ? appProps.mirroring === true : false;
+        props.mirroring !== undefined ? props.mirroring === true : false;
 
       // Get GB hardware type
       const gbHwType =
-        appProps.hwType !== undefined ? parseInt(appProps.hwType) : 0;
+        props.hwType !== undefined ? parseInt(props.hwType) : 0;
 
       // Get GB colors
       const gbColors =
-        appProps.colors !== undefined ? parseInt(appProps.colors) : 0;
+        props.colors !== undefined ? parseInt(props.colors) : 0;
 
       // Get GB palette
       const gbPalette =
-        appProps.palette !== undefined ? parseInt(appProps.palette) : 0;
+        props.palette !== undefined ? parseInt(props.palette) : 0;
 
       // Get GB border
       const gbBorder =
-        appProps.border !== undefined ? parseInt(appProps.border) : 0;
+        props.border !== undefined ? parseInt(props.border) : 0;
 
       // Disable cart lookup
       const disableLookup =
-        appProps.disableLookup !== undefined ? appProps.disableLookup === true : false;
+        props.disableLookup !== undefined ? props.disableLookup === true : false;
 
       // Get the type
-      const type = appProps.type;
+      const type = props.type;
       if (!type) throw new Error('The application type was not specified.');
       this.isGba = type === APP_TYPE_KEYS.VBA_M_GBA;
 
@@ -141,6 +136,10 @@ class App extends WebrcadeApp {
           mirroring,
           disableLookup
         );
+        
+        this.emulator.props = props;
+        console.log("🎯 Final emulator props:", props);
+        this.emulator.getType = () => props.type;
       }
 
       const { emulator } = this;
@@ -149,7 +148,6 @@ class App extends WebrcadeApp {
       window.app = window.app || {};
       window.app.emulator = emulator;
       window.app.emulator.saveState = emulator.saveState?.bind(emulator);
-      window.getSaveStateBlob = window.wrc.getSaveBlob;
 
       // Determine extensions
       const exts = [
@@ -172,8 +170,6 @@ class App extends WebrcadeApp {
       emulator
         .loadEmscriptenModule()
         .then(() => settings.load())
-        // .then(() => settings.setBilinearFilterEnabled(true))
-        // .then(() => settings.setVsyncEnabled(false))
         .then(() => new FetchAppData(rom).fetch())
         .then((response) => {
           LOG.info('downloaded.');
@@ -241,7 +237,10 @@ class App extends WebrcadeApp {
               }
             }
           };
-        })
+          if (window.wrc?.getSaveBlob) {
+            window.getSaveStateBlob = window.wrc.getSaveBlob;
+          }
+        })             
         .catch((msg) => {
           LOG.error(msg);
           this.exit(
@@ -255,6 +254,7 @@ class App extends WebrcadeApp {
       this.exit(e);
     }
   }
+
 
   async onPreExit() {
     try {

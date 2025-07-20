@@ -233,22 +233,24 @@ export class Emulator extends AppWrapper {
     return new Promise((resolve, reject) => {
       const script = document.createElement('script');
       document.body.appendChild(script);
-      script.src = 'js/emu.js';
+      script.src = 'emu.js';
       script.async = true;
       script.onload = () => {
         LOG.info('Script loaded.');
         if (window.gbaninja) {
-          window.gbaninja.then((vba) => {
+          //Correct usage: call gbaninja() because it's a factory function
+          window.gbaninja().then((vba) => {
             this.vba = vba;
             window.vba = vba;
             resolve();
+          }).catch((err) => {
+            reject(`Failed to initialize gbaninja: ${err}`);
           });
         } else {
-          reject('An error occurred attempting to load the GBA engine.');
+          reject('gbaninja is not defined on window.');
         }
       };
     });
-  }
 
   async migrateSaves() {
     const { saveStatePath, storage, SAVE_NAME } = this;
@@ -499,8 +501,12 @@ export class Emulator extends AppWrapper {
     window.VBAInterface = this.vbaInterface;
 
     // Load save state
-    this.saveStatePrefix = app.getStoragePath(`${romMd5}/`);
-    this.saveStatePath = `${this.saveStatePrefix}sav`;
+    if (!this.saveStatePrefix) {
+      this.saveStatePrefix = app.getStoragePath(`${romMd5}/`);
+    }
+    if (!this.saveStatePath) {
+      this.saveStatePath = `${this.saveStatePrefix}sav`;
+    }
     await this.loadState();
 
     // Create display loop

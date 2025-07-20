@@ -1,7 +1,7 @@
 {
   "name": "@webrcade/app-vba-m",
   "version": "0.1.0",
-  "homepage": ".",
+  "homepage": "/rom-reader/webrcade/play/app/gba",
   "private": true,
   "dependencies": {
     "@testing-library/jest-dom": "^5.11.9",
